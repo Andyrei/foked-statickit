@@ -76,6 +76,11 @@ import {
   Globe,
   Link2,
   Package,
+  CheckSquare,
+  Square,
+  Images,
+  ListChecks,
+  WandSparkles,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -252,7 +257,37 @@ function HomeContent() {
   const [step, setStep] = useState<Step>('editor');
   const [selectedTool, setSelectedTool] = useState<Tool>('edit');
   const [isSidebarExpanded, setIsSidebarExpanded] = useState(false);
-  const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null);
+  const [uploadedImages, setUploadedImages] = useState<UploadedImage[] | null>(null);
+  
+  // Track which image index is currently being viewed/previewed in the editor
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  
+  // Derived single image state - the currently active/displayed image
+  const uploadedImage = uploadedImages?.[activeImageIndex] ?? null;
+  const setUploadedImage = (image: UploadedImage | null) => {
+    if (image === null) {
+      setUploadedImages(null);
+      setActiveImageIndex(0);
+      setImageVersionsMap({});
+      setImageActiveBaseMap({});
+    } else {
+      // Find or update the image
+      const existingIndex = uploadedImages?.findIndex(img => img.url === image.url) ?? -1;
+      if (existingIndex >= 0) {
+        setActiveImageIndex(existingIndex);
+      } else {
+        setUploadedImages(prev => prev ? [...prev, image] : [image]);
+        setActiveImageIndex(prev => prev + 1);
+      }
+    }
+  };
+  
+  // Bulk image selection state
+  const [selectedImageIds, setSelectedImageIds] = useState<Set<string>>(new Set());
+  const [bulkEditPrompt, setBulkEditPrompt] = useState('');
+  const [isBulkEditing, setIsBulkEditing] = useState(false);
+  const [bulkEditProgress, setBulkEditProgress] = useState<{ current: number; total: number } | null>(null);
+  
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [variations, setVariations] = useState<Variation[]>([]);
   const [selectedVariationId, setSelectedVariationId] = useState<string | null>(null);
@@ -304,8 +339,13 @@ function HomeContent() {
   // isEditingOriginal removed - now tracking per-version with status field
 
   // Base versions - each is a starting point for edits (Original + any "New Version" snapshots)
+  // Now stored per-image in imageVersionsMap
   const [baseVersions, setBaseVersions] = useState<BaseVersion[]>([]);
   const [activeBaseId, setActiveBaseId] = useState<string>('original');
+  
+  // Store versions per image URL for bulk editing support
+  const [imageVersionsMap, setImageVersionsMap] = useState<Record<string, BaseVersion[]>>({});
+  const [imageActiveBaseMap, setImageActiveBaseMap] = useState<Record<string, string>>({});
 
   // Computed: get current base version's data
   const activeBase = baseVersions.find(b => b.id === activeBaseId) || baseVersions[0];
@@ -1548,60 +1588,164 @@ function HomeContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTool, selectedVariationId]);
 
+  // Handle switching between images in bulk mode
+  useEffect(() => {
+    if (!uploadedImages || uploadedImages.length <= 1) return;
+    
+    const currentImage = uploadedImages[activeImageIndex];
+    if (!currentImage) return;
+    
+    // Load versions for this image
+    const versions = imageVersionsMap[currentImage.url];
+    if (versions && versions.length > 0) {
+      setBaseVersions(versions);
+      setActiveBaseId(imageActiveBaseMap[currentImage.url] || 'original');
+    }
+  }, [activeImageIndex, uploadedImages, imageVersionsMap, imageActiveBaseMap]);
+
+  // Sync baseVersions back to the map only when they change (not on initial load)
+  const prevBaseVersionsRef = useRef<BaseVersion[]>([]);
+  const isInitialLoadRef = useRef(true);
+  
+  useEffect(() => {
+    if (!uploadedImage || baseVersions.length === 0) return;
+    
+    // Skip initial load sync
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      prevBaseVersionsRef.current = baseVersions;
+      return;
+    }
+    
+    // Only sync if versions actually changed
+    const hasChanged = baseVersions !== prevBaseVersionsRef.current;
+    if (hasChanged) {
+      prevBaseVersionsRef.current = baseVersions;
+      setImageVersionsMap(prev => ({
+        ...prev,
+        [uploadedImage.url]: baseVersions,
+      }));
+      setImageActiveBaseMap(prev => ({
+        ...prev,
+        [uploadedImage.url]: activeBaseId,
+      }));
+    }
+  }, [baseVersions, activeBaseId, uploadedImage]);
+
+  // Process multiple files and add them to uploadedImages
+  const processFiles = useCallback((files: File[], newImages: UploadedImage[]) => {
+    const existingImages = uploadedImages || [];
+    const updatedImages = [...existingImages, ...newImages];
+    setUploadedImages(updatedImages);
+    
+    // Initialize versions for each new image
+    const newVersionsMap: Record<string, BaseVersion[]> = {};
+    const newActiveBaseMap: Record<string, string> = {};
+    
+    newImages.forEach(img => {
+      const baseVersion: BaseVersion = {
+        id: 'original',
+        name: 'Original',
+        baseImageUrl: img.url,
+        sourceLabel: 'Uploaded image',
+        versions: [{ imageUrl: img.url, prompt: null, parentIndex: -1, status: 'completed' as const }],
+        currentVersionIndex: 0,
+        resizedVersions: [],
+      };
+      newVersionsMap[img.url] = [baseVersion];
+      newActiveBaseMap[img.url] = 'original';
+    });
+    
+    // Update image versions map
+    setImageVersionsMap(prev => ({ ...prev, ...newVersionsMap }));
+    setImageActiveBaseMap(prev => ({ ...prev, ...newActiveBaseMap }));
+    
+    // If this is the first image, set it as active and initialize base versions
+    if (existingImages.length === 0 && newImages.length > 0) {
+      const firstImage = newImages[0];
+      setActiveImageIndex(0);
+      setBaseVersions(newVersionsMap[firstImage.url]);
+      setActiveBaseId('original');
+      setStep('editor');
+      setSelectedTool('edit');
+    }
+    
+    // Track uploads
+    newImages.forEach(img => {
+      track('image_uploaded', {
+        width: img.width,
+        height: img.height,
+        aspectRatio: img.aspectRatio,
+        fileSize: img.file.size,
+      });
+    });
+  }, [uploadedImages]);
+
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
     if (acceptedFiles.length === 0) return;
 
-    const file = acceptedFiles[0];
-    if (file.size > 10 * 1024 * 1024) {
-      setError('File size must be less than 10MB');
-      return;
-    }
+    const newImages: UploadedImage[] = [];
+    let errorMessages: string[] = [];
+    
+    const processNextFile = (index: number) => {
+      if (index >= acceptedFiles.length) {
+        // All files processed
+        if (newImages.length > 0) {
+          processFiles(acceptedFiles, newImages);
+        }
+        if (errorMessages.length > 0) {
+          setError(errorMessages.join('. '));
+        }
+        return;
+      }
+      
+      const file = acceptedFiles[index];
+      
+      if (file.size > 10 * 1024 * 1024) {
+        errorMessages.push(`${file.name}: File size must be less than 10MB`);
+        processNextFile(index + 1);
+        return;
+      }
 
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
+      // Use FileReader to create a data URL (self-contained, can be persisted)
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        const img = new Image();
+        
+        img.onload = () => {
+          const { key, label } = detectAspectRatio(img.width, img.height);
+          newImages.push({
+            file,
+            url: dataUrl, // Store data URL instead of blob URL for session persistence
+            filename: file.name,
+            width: img.width,
+            height: img.height,
+            aspectRatio: label,
+            aspectRatioKey: key,
+          });
+          processNextFile(index + 1);
+        };
 
-    img.onload = () => {
-      const { key, label } = detectAspectRatio(img.width, img.height);
-      setUploadedImage({
-        file,
-        url: objectUrl,
-        filename: file.name,
-        width: img.width,
-        height: img.height,
-        aspectRatio: label,
-        aspectRatioKey: key,
-      });
-      // Initialize base versions with the Original
-      setBaseVersions([{
-        id: 'original',
-        name: 'Original',
-        baseImageUrl: objectUrl,
-        sourceLabel: 'Uploaded image',
-        versions: [{ imageUrl: objectUrl, prompt: null, parentIndex: -1, status: 'completed' as const }],
-        currentVersionIndex: 0,
-        resizedVersions: [],
-      }]);
-      setActiveBaseId('original');
-      setStep('editor');
-      setSelectedTool('edit'); // Default to edit tool
+        img.onerror = () => {
+          errorMessages.push(`${file.name}: Failed to read image dimensions`);
+          processNextFile(index + 1);
+        };
 
-      // Track upload
-      track('image_uploaded', {
-        width: img.width,
-        height: img.height,
-        aspectRatio: label,
-        fileSize: file.size,
-      });
+        img.src = dataUrl;
+      };
+
+      reader.onerror = () => {
+        errorMessages.push(`${file.name}: Failed to read file`);
+        processNextFile(index + 1);
+      };
+
+      reader.readAsDataURL(file);
     };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      setError('Failed to read image');
-    };
-
-    img.src = objectUrl;
-  }, []);
+    
+    processNextFile(0);
+  }, [processFiles]);
 
   const { getRootProps, getInputProps, isDragActive, open: openFileDialog } = useDropzone({
     onDrop,
@@ -1610,9 +1754,7 @@ function HomeContent() {
       'image/jpeg': ['.jpg', '.jpeg'],
       'image/webp': ['.webp'],
     },
-    maxFiles: 1,
-    disabled: uploadedImage !== null, // Only disabled when we have an image
-    noClick: uploadedImage !== null, // Disable click when image exists
+    maxFiles: 20, // Allow up to 20 images for bulk editing
   });
 
   // Trigger upload icon animation when dragging files over
@@ -1867,7 +2009,271 @@ function HomeContent() {
 
     setVariations(prev => [...prev, newVariation]);
     setCustomIterationDescription('');
-    setShowCustomIteration(false);
+    setShowCustomVariationInput(false);
+  };
+
+  // Bulk edit handler - applies the same edit to multiple selected images
+  const handleBulkEdit = async () => {
+    if (!bulkEditPrompt.trim()) {
+      toast.error('Please enter an edit prompt');
+      return;
+    }
+    
+    if (selectedImageIds.size === 0) {
+      toast.error('Please select images to edit');
+      return;
+    }
+    
+    if (!apiKey) {
+      setShowApiKeySetup(true);
+      return;
+    }
+
+    const imagesToEdit = (uploadedImages || []).filter(img => selectedImageIds.has(img.url));
+    
+    if (imagesToEdit.length === 0) {
+      toast.error('No valid images selected');
+      return;
+    }
+
+    setIsBulkEditing(true);
+    setBulkEditProgress({ current: 0, total: imagesToEdit.length });
+    setError(null);
+
+    const editPromptUsed = bulkEditPrompt.trim();
+    const results: { imageUrl: string; success: boolean; filename: string }[] = [];
+    const concurrencyLimit = 3; // Process 3 images at a time
+    let completed = 0;
+
+    const processImage = async (image: UploadedImage): Promise<{ imageUrl: string; success: boolean; filename: string }> => {
+      try {
+        let imageToEdit: string;
+        if (image.url.startsWith('data:')) {
+          imageToEdit = image.url.split(',')[1];
+        } else {
+          const base64 = await fileToBase64(image.file);
+          imageToEdit = base64;
+        }
+
+        const apiKeys = getApiKeysForModel(selectedAIModel);
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...apiKeys,
+            image: imageToEdit,
+            mimeType: image.file.type,
+            analysis: analysis || {
+              product: 'Image',
+              brand_style: 'Not specified',
+              visual_elements: [],
+              key_selling_points: [],
+              target_audience: 'General',
+              colors: [],
+              mood: 'Not specified',
+            },
+            variationDescription: `BULK EDIT: ${editPromptUsed}`,
+            aspectRatio: image.aspectRatio,
+            isEdit: true,
+            model: selectedAIModel,
+            quality: getQualityForModel(selectedAIModel),
+          }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          return { imageUrl: data.imageUrl, success: true, filename: image.filename };
+        } else {
+          return { imageUrl: '', success: false, filename: image.filename };
+        }
+      } catch (err) {
+        console.error(`Bulk edit error for ${image.filename}:`, err);
+        return { imageUrl: '', success: false, filename: image.filename };
+      }
+    };
+
+    // Process images with concurrency limit
+    const processWithConcurrency = async () => {
+      const queue = [...imagesToEdit];
+      const promises: Promise<void>[] = [];
+
+      const processNext = async () => {
+        while (queue.length > 0) {
+          const image = queue.shift()!;
+          const result = await processImage(image);
+          results.push(result);
+          completed++;
+          setBulkEditProgress({ current: completed, total: imagesToEdit.length });
+          
+          if (result.success) {
+            track('image_generated', { tool: 'edit' });
+          }
+        }
+      };
+
+      // Start initial batch
+      for (let i = 0; i < Math.min(concurrencyLimit, queue.length); i++) {
+        promises.push(processNext());
+      }
+
+      await Promise.all(promises);
+    };
+
+    await processWithConcurrency();
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    if (successCount > 0) {
+      toast.success(`Successfully edited ${successCount} image${successCount > 1 ? 's' : ''}`);
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to edit ${failCount} image${failCount > 1 ? 's' : ''}`);
+    }
+
+    setIsBulkEditing(false);
+    setBulkEditProgress(null);
+    setBulkEditPrompt('');
+  };
+
+  // Bulk remove background - applies background removal to multiple selected images
+  const handleBulkRemoveBackground = async () => {
+    if (selectedImageIds.size === 0) {
+      toast.error('Please select images to remove background');
+      return;
+    }
+
+    const imagesToProcess = (uploadedImages || []).filter(img => selectedImageIds.has(img.url));
+    
+    if (imagesToProcess.length === 0) {
+      toast.error('No valid images selected');
+      return;
+    }
+
+    setIsBulkEditing(true);
+    setBulkEditProgress({ current: 0, total: imagesToProcess.length });
+    
+    const results: { originalUrl: string; newUrl?: string; success: boolean; filename: string }[] = [];
+    const updatedImages: Map<string, string> = new Map();
+    let completed = 0;
+
+    for (const image of imagesToProcess) {
+      const originalUrl = image.url; // Capture original URL
+      console.log(`[Bulk BG] Processing image ${completed + 1}/${imagesToProcess.length}: ${image.filename}`);
+      
+      try {
+        const result = await removeImageBackground(originalUrl);
+        const newDataUrl = `data:image/png;base64,${result.base64}`;
+        
+        results.push({ originalUrl, newUrl: newDataUrl, success: true, filename: image.filename });
+        updatedImages.set(originalUrl, newDataUrl);
+        
+        console.log(`[Bulk BG] Success: ${image.filename}`);
+        track('image_generated', { tool: 'background' });
+      } catch (err) {
+        console.error(`[Bulk BG] Error for ${image.filename}:`, err);
+        results.push({ originalUrl, success: false, filename: image.filename });
+      }
+      
+      completed++;
+      setBulkEditProgress({ current: completed, total: imagesToProcess.length });
+      
+      // Small delay between images to avoid overwhelming the model
+      if (completed < imagesToProcess.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    // Batch update all images at once
+    if (updatedImages.size > 0) {
+      setUploadedImages(prev => prev ? prev.map(img => {
+        const newUrl = updatedImages.get(img.url);
+        return newUrl ? { ...img, url: newUrl } : img;
+      }) : prev);
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    if (successCount > 0) {
+      toast.success(`Background removed from ${successCount} image${successCount > 1 ? 's' : ''}`);
+    }
+    if (failCount > 0) {
+      toast.error(`Failed to remove background from ${failCount} image${failCount > 1 ? 's' : ''}`);
+    }
+
+    setIsBulkEditing(false);
+    setBulkEditProgress(null);
+  };
+
+  // Select/deselect all images
+  const toggleSelectAll = () => {
+    if (selectedImageIds.size === (uploadedImages?.length || 0)) {
+      setSelectedImageIds(new Set());
+    } else {
+      setSelectedImageIds(new Set((uploadedImages || []).map(img => img.url)));
+    }
+  };
+
+  // Toggle selection of a single image
+  const toggleImageSelection = (imageUrl: string) => {
+    setSelectedImageIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(imageUrl)) {
+        newSet.delete(imageUrl);
+      } else {
+        newSet.add(imageUrl);
+      }
+      return newSet;
+    });
+  };
+
+  // Delete selected images
+  const handleDeleteSelected = () => {
+    if (selectedImageIds.size === 0) return;
+    
+    const remainingImages = (uploadedImages || []).filter(img => !selectedImageIds.has(img.url));
+    
+    // Clean up versions map
+    const deletedUrls = Array.from(selectedImageIds);
+    setImageVersionsMap(prev => {
+      const newMap = { ...prev };
+      deletedUrls.forEach(url => delete newMap[url]);
+      return newMap;
+    });
+    setImageActiveBaseMap(prev => {
+      const newMap = { ...prev };
+      deletedUrls.forEach(url => delete newMap[url]);
+      return newMap;
+    });
+    
+    // Adjust active image index if needed
+    if (activeImageIndex >= remainingImages.length) {
+      setActiveImageIndex(Math.max(0, remainingImages.length - 1));
+    }
+    
+    setUploadedImages(remainingImages.length > 0 ? remainingImages : null);
+    setSelectedImageIds(new Set());
+    
+    toast.success(`Deleted ${selectedImageIds.size} image${selectedImageIds.size > 1 ? 's' : ''}`);
+  };
+
+  // Download selected images
+  const handleDownloadSelected = async () => {
+    if (selectedImageIds.size === 0) {
+      toast.error('Please select images to download');
+      return;
+    }
+
+    const imagesToDownload = (uploadedImages || []).filter(img => selectedImageIds.has(img.url));
+    
+    for (const image of imagesToDownload) {
+      const filename = `bulk_${Date.now()}_${image.filename}`;
+      await handleDownload(image.url, filename);
+      await new Promise(resolve => setTimeout(resolve, 500)); // Rate limit
+    }
+    
+    toast.success(`Downloaded ${imagesToDownload.length} image${imagesToDownload.length > 1 ? 's' : ''}`);
   };
 
   const handleGenerateSingle = async (variationId: string) => {
@@ -4295,6 +4701,223 @@ Output: A single combined 3×3 grid image in 3:4 aspect ratio.`;
           className="fixed inset-0 bg-black/60 z-40 md:hidden touch-none"
           onClick={() => { setIsMobileSidebarOpen(false); setIsSidebarExpanded(false); }}
         />
+      )}
+
+      {/* Bulk Image Gallery */}
+      {uploadedImages && uploadedImages.length > 1 && (
+        <div className="border-b border-border bg-muted/30">
+          <div className="px-4 py-3">
+            {/* Bulk Actions Toolbar */}
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={toggleSelectAll}
+                  className="flex items-center gap-2 text-sm hover:text-primary transition-colors"
+                >
+                  {selectedImageIds.size === uploadedImages.length ? (
+                    <CheckSquare className="w-4 h-4 text-primary" />
+                  ) : (
+                    <Square className="w-4 h-4" />
+                  )}
+                  <span className="font-medium">
+                    {selectedImageIds.size === uploadedImages.length ? 'Deselect All' : 'Select All'}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    ({selectedImageIds.size}/{uploadedImages.length})
+                  </span>
+                </button>
+                <span className="text-xs text-muted-foreground">
+                  Shift+click to select for bulk
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {selectedImageIds.size > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBulkEdit}
+                      className="gap-1.5"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Bulk Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDownloadSelected}
+                      className="gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDeleteSelected}
+                      className="gap-1.5 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </Button>
+                  </>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-2">
+                {selectedImageIds.size > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBulkRemoveBackground}
+                      disabled={isBulkEditing}
+                      className="gap-1.5"
+                    >
+                      {isBulkEditing ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Eraser className="w-3.5 h-3.5" />
+                      )}
+                      Remove BG
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5"
+                    >
+                      <Wand2 className="w-3.5 h-3.5" />
+                      Bulk Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDownloadSelected}
+                      className="gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleDeleteSelected}
+                      className="gap-1.5 text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Bulk Edit Input */}
+            {selectedImageIds.size > 1 && (
+              <div className="flex gap-2 items-start">
+                <div className="flex-1">
+                  <Input
+                    placeholder="Enter edit prompt for all selected images..."
+                    value={bulkEditPrompt}
+                    onChange={(e) => setBulkEditPrompt(e.target.value)}
+                    className="bg-background/50"
+                    disabled={isBulkEditing}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && bulkEditPrompt.trim() && !isBulkEditing) {
+                        handleBulkEdit();
+                      }
+                    }}
+                  />
+                  {bulkEditProgress && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Processing {bulkEditProgress.current} of {bulkEditProgress.total} images...
+                    </div>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={handleBulkEdit}
+                  disabled={!bulkEditPrompt.trim() || isBulkEditing}
+                  className="gap-1.5"
+                >
+                  {isBulkEditing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <WandSparkles className="w-4 h-4" />
+                      Apply to {selectedImageIds.size} Image{selectedImageIds.size > 1 ? 's' : ''}
+                    </>
+                  )}
+                </Button>
+              </div>
+            )}
+
+            {/* Image Thumbnail Grid */}
+            <div className="flex gap-2 mt-3 overflow-x-auto pb-2">
+              {uploadedImages.map((img, idx) => (
+                <div
+                  key={img.url}
+                  className={`relative group flex-shrink-0 cursor-pointer transition-all ${
+                    activeImageIndex === idx 
+                      ? 'ring-2 ring-primary rounded-lg scale-105' 
+                      : selectedImageIds.has(img.url) 
+                        ? 'ring-2 ring-blue-500 rounded-lg' 
+                        : 'hover:ring-2 hover:ring-muted-foreground/30 rounded-lg'
+                  }`}
+                  onClick={(e) => {
+                    if (e.shiftKey || e.metaKey) {
+                      // Shift+click or CMD+click on Mac - toggle selection for bulk edit
+                      setActiveImageIndex(idx);
+                    } else {
+                      // Regular click - preview this image
+                      toggleImageSelection(img.url);
+                    }
+                  }}
+                >
+                  <div className="w-16 h-20 rounded-lg overflow-hidden bg-muted border border-border">
+                    <img
+                      src={img.url}
+                      alt={img.filename}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                  {/* Selection checkbox */}
+                  <div className={`absolute -top-1 -left-1 w-5 h-5 rounded border flex items-center justify-center transition-all ${
+                    selectedImageIds.has(img.url)
+                      ? 'bg-blue-500 border-blue-500 text-white'
+                      : 'bg-background/80 border-muted-foreground/30 opacity-0 group-hover:opacity-100'
+                  }`}>
+                    {selectedImageIds.has(img.url) && <Check className="w-3 h-3" />}
+                  </div>
+                  {/* Active indicator */}
+                  {activeImageIndex === idx && !selectedImageIds.has(img.url) && (
+                    <div className="absolute -top-1 -left-1 w-5 h-5 rounded-full bg-primary border-2 border-background flex items-center justify-center">
+                      <Eye className="w-3 h-3 text-primary-foreground" />
+                    </div>
+                  )}
+                  {/* Index badge */}
+                  <div className={`absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                    activeImageIndex === idx ? 'bg-primary text-primary-foreground' : 'bg-background/90'
+                  }`}>
+                    {idx + 1}
+                  </div>
+                </div>
+              ))}
+              
+              {/* Add More Button */}
+              <button
+                onClick={openFileDialog}
+                className="flex-shrink-0 w-16 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 hover:border-primary/50 hover:bg-muted/50 flex items-center justify-center transition-all"
+              >
+                <Plus className="w-5 h-5 text-muted-foreground/50" />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Main Interface */}
@@ -7199,19 +7822,26 @@ Output: A single combined 3×3 grid image in 3:4 aspect ratio.`;
                       <span className="text-[10px] text-muted-foreground/60">{t('backgrounds.noApiNeeded')}</span>
                     </div>
                     <button
-                      onClick={handleRemoveBackground}
-                      disabled={isRemovingBackground || (originalVersions.length > 0 && originalVersions[originalVersionIndex]?.status === 'processing')}
+                      onClick={() => {
+                        // Use bulk handler if multiple images selected, otherwise single
+                        if (selectedImageIds.size > 1) {
+                          handleBulkRemoveBackground();
+                        } else {
+                          handleRemoveBackground();
+                        }
+                      }}
+                      disabled={(isRemovingBackground || isBulkEditing) || (originalVersions.length > 0 && originalVersions[originalVersionIndex]?.status === 'processing')}
                       className="w-full py-2 px-3 rounded-lg border border-dashed border-border hover:border-primary/50 hover:bg-muted/50 transition-colors flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {isRemovingBackground ? (
+                      {(isRemovingBackground || isBulkEditing) ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin text-muted-foreground/50" />
-                          <span>{t('backgrounds.removing')}</span>
+                          <span>{selectedImageIds.size > 1 ? t('backgrounds.removing') + ` (${bulkEditProgress?.current || 0}/${bulkEditProgress?.total || selectedImageIds.size})` : t('backgrounds.removing')}</span>
                         </>
                       ) : (
                         <>
                           <Eraser className="w-4 h-4 text-muted-foreground/50" />
-                          <span>{t('backgrounds.removeBackground')}</span>
+                          <span>{t('backgrounds.removeBackground')}{selectedImageIds.size > 1 ? ` (${selectedImageIds.size})` : ''}</span>
                         </>
                       )}
                     </button>

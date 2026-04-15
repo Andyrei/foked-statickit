@@ -189,6 +189,32 @@ export function useSessionPersistence(): UseSessionPersistenceResult {
   }, []);
 
   /**
+   * Convert any URL to a fetchable URL (data URL or regular URL)
+   * Blob URLs need special handling - we skip them and return null
+   */
+  const urlToDataUrl = async (url: string): Promise<string | null> => {
+    if (url.startsWith('data:')) {
+      return url; // Already a data URL
+    }
+    
+    // Blob URLs can't be fetched - this is expected for object URLs
+    if (url.startsWith('blob:')) {
+      return null;
+    }
+    
+    // For regular URLs, fetch and convert to data URL
+    const response = await fetch(url);
+    const blob = await response.blob();
+    
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  /**
    * Serialize an image URL to IndexedDB and return the ID
    */
   const serializeImageUrl = async (url: string | null): Promise<string | null> => {
@@ -199,7 +225,13 @@ export function useSessionPersistence(): UseSessionPersistenceResult {
     if (cached) return cached;
 
     try {
-      const imageId = await storeImageFromUrl(url);
+      // Convert URL to data URL first (handles blob: URLs)
+      const dataUrl = await urlToDataUrl(url);
+      if (!dataUrl) {
+        console.warn('Cannot serialize blob: URL - image will not be persisted:', url.substring(0, 50));
+        return null;
+      }
+      const imageId = await storeImageFromUrl(dataUrl);
       imageUrlCacheRef.current.set(url, imageId);
       return imageId;
     } catch (error) {
@@ -257,15 +289,24 @@ export function useSessionPersistence(): UseSessionPersistenceResult {
       // NOTE: We keep the image cache between saves to avoid re-storing unchanged images
       // This significantly improves performance for large sessions
 
-      // Generate thumbnail from current image
-      const currentImageUrl = state.baseVersions.length > 0
-        ? state.baseVersions.find(b => b.id === state.activeBaseId)?.versions[
-            state.baseVersions.find(b => b.id === state.activeBaseId)?.currentVersionIndex || 0
-          ]?.imageUrl || state.uploadedImage.url
-        : state.uploadedImage.url;
+      // Generate thumbnail from current image (with error handling)
+      let thumbnailId = '';
+      try {
+        const currentImageUrl = state.baseVersions.length > 0
+          ? state.baseVersions.find(b => b.id === state.activeBaseId)?.versions[
+              state.baseVersions.find(b => b.id === state.activeBaseId)?.currentVersionIndex || 0
+            ]?.imageUrl || state.uploadedImage.url
+          : state.uploadedImage.url;
 
-      const thumbnailBlob = await generateThumbnail(currentImageUrl);
-      const thumbnailId = await storeImage(thumbnailBlob, 'image/jpeg');
+        if (currentImageUrl) {
+          const thumbnailBlob = await generateThumbnail(currentImageUrl);
+          thumbnailId = await storeImage(thumbnailBlob, 'image/jpeg');
+        }
+      } catch (thumbnailError) {
+        console.warn('Failed to generate thumbnail, session will save without preview:', thumbnailError);
+        // Continue saving without thumbnail - it's not critical
+        thumbnailId = '';
+      }
 
       // Serialize uploaded image
       const uploadedImageId = await serializeImageUrl(state.uploadedImage.url);

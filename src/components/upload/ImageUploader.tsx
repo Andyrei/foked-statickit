@@ -71,7 +71,7 @@ export function ImageUploader({ onUpload, currentImage, onRemove }: ImageUploade
       'image/jpeg': ['.jpg', '.jpeg'],
       'image/webp': ['.webp'],
     },
-    maxFiles: 1,
+    maxFiles: null,
     onDropRejected: () => {
       setError('Please upload a valid image file (PNG, JPG, or WebP)');
     },

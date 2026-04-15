@@ -216,20 +216,38 @@ export async function storeImage(blob: Blob, mimeType: string): Promise<string> 
 
 /**
  * Store an image from a URL (fetches and converts to Blob)
- * Handles both object URLs and data URLs
+ * Handles data URLs and regular URLs
  */
 export async function storeImageFromUrl(url: string): Promise<string> {
+  // Null check
+  if (!url) {
+    throw new Error('URL is null or empty');
+  }
+
+  // Blob URLs created by URL.createObjectURL() can only be accessed from the same browsing context
+  // They're typically used for temporary object URLs from file uploads
+  // We need to use a different approach - fetch won't work for blob: URLs in service workers
+  if (url.startsWith('blob:')) {
+    throw new Error('Cannot store blob: URL - use the original File object instead');
+  }
+
+  let blob: Blob;
+  let mimeType = 'image/png';
+
   // Handle data URLs
   if (url.startsWith('data:')) {
     const response = await fetch(url);
-    const blob = await response.blob();
-    return storeImage(blob, blob.type || 'image/png');
+    blob = await response.blob();
+    mimeType = blob.type || 'image/png';
+  }
+  // Handle regular URLs
+  else {
+    const response = await fetch(url);
+    blob = await response.blob();
+    mimeType = blob.type || 'image/png';
   }
 
-  // Handle object URLs and regular URLs
-  const response = await fetch(url);
-  const blob = await response.blob();
-  return storeImage(blob, blob.type || 'image/png');
+  return storeImage(blob, mimeType);
 }
 
 /**
@@ -267,14 +285,6 @@ export async function getImageAsBase64(imageId: string): Promise<{ base64: strin
 }
 
 /**
- * Delete an image from IndexedDB
- */
-export async function deleteImage(imageId: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('images', imageId);
-}
-
-/**
  * Generate a small thumbnail from an image URL for the resume modal
  * @param imageUrl Source image URL
  * @param maxSize Maximum dimension for the thumbnail
@@ -282,45 +292,70 @@ export async function deleteImage(imageId: string): Promise<void> {
  */
 export async function generateThumbnail(imageUrl: string, maxSize = 200): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    // Validate URL
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      reject(new Error('Invalid image URL'));
+      return;
+    }
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
+    
+    // Timeout for loading
+    const timeout = setTimeout(() => {
+      img.src = ''; // Cancel the load
+      reject(new Error('Image load timeout'));
+    }, 10000);
+    
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        reject(new Error('Could not get canvas context'));
-        return;
-      }
-
-      // Calculate thumbnail dimensions maintaining aspect ratio
-      let width = img.width;
-      let height = img.height;
-
-      if (width > height) {
-        if (width > maxSize) {
-          height = Math.round(height * maxSize / width);
-          width = maxSize;
+      clearTimeout(timeout);
+      
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not get canvas context'));
+          return;
         }
-      } else {
-        if (height > maxSize) {
-          width = Math.round(width * maxSize / height);
-          height = maxSize;
-        }
-      }
 
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(img, 0, 0, width, height);
+        // Calculate thumbnail dimensions maintaining aspect ratio
+        let width = img.width;
+        let height = img.height;
 
-      canvas.toBlob((blob) => {
-        if (blob) {
-          resolve(blob);
+        if (width > height) {
+          if (width > maxSize) {
+            height = Math.round(height * maxSize / width);
+            width = maxSize;
+          }
         } else {
-          reject(new Error('Could not generate thumbnail'));
+          if (height > maxSize) {
+            width = Math.round(width * maxSize / height);
+            height = maxSize;
+          }
         }
-      }, 'image/jpeg', 0.7);
+
+        canvas.width = width;
+        canvas.height = height;
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Could not generate thumbnail'));
+          }
+        }, 'image/jpeg', 0.7);
+      } catch (err) {
+        clearTimeout(timeout);
+        reject(new Error('Canvas error'));
+      }
     };
-    img.onerror = () => reject(new Error('Could not load image'));
+    
+    img.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error('Could not load image'));
+    };
+    
     img.src = imageUrl;
   });
 }
