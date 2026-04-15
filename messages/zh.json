@@ -545,7 +545,8 @@
     "skipForNow": "暂时跳过",
     "storageNotice": "API 密钥本地存储在您的浏览器中，永不发送到我们的服务器。",
     "validationFailed": "API 密钥验证失败。请重试。",
-    "invalidApiKey": "无效的 API 密钥"
+    "invalidApiKey": "无效的 API 密钥",
+    "storedLabel": "已存储"
   },
   "versions": {
     "original": "原始",

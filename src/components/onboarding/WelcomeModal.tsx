@@ -20,6 +20,8 @@ interface WelcomeModalProps {
   onOpenChange: (open: boolean) => void;
   onApiKeySet?: (apiKey: string) => void;
   onOpenAIKeySet?: (apiKey: string) => void;
+  isGeminiKeySet?: boolean;
+  isOpenAIKeySet?: boolean;
 }
 
 // Official Google Gemini logo SVG component
@@ -71,6 +73,8 @@ export function WelcomeModal({
   onOpenChange,
   onApiKeySet,
   onOpenAIKeySet,
+  isGeminiKeySet,
+  isOpenAIKeySet,
 }: WelcomeModalProps) {
   const { openSignUp } = useClerk();
   const { isSignedIn, isLoaded } = useAuth();
@@ -339,6 +343,7 @@ export function WelcomeModal({
               <div className="flex items-center gap-2">
                 <GeminiLogo className="w-4 h-4" />
                 <span className="text-sm font-medium text-foreground">{t("apiKey.googleGemini")}</span>
+                {isGeminiKeySet && (<><Check className="w-4 h-4 text-emerald-500" /> <span className="text-xs text-emerald-500">{t("apiKey.storedLabel")}</span></>)}
               </div>
               <div className="flex items-stretch gap-2">
                 <div className="flex-1 flex items-center px-3 bg-muted/30 border border-border rounded-lg focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/50">
@@ -411,6 +416,7 @@ export function WelcomeModal({
               <div className="flex items-center gap-2">
                 <OpenAILogo className="w-4 h-4" />
                 <span className="text-sm font-medium text-foreground">{t("apiKey.openai")}</span>
+                {isOpenAIKeySet && (<><Check className="w-4 h-4 text-emerald-500" /> <span className="text-xs text-emerald-500">{t("apiKey.storedLabel")}</span></>)}
               </div>
               <div className="flex items-stretch gap-2">
                 <div className="flex-1 flex items-center px-3 bg-muted/30 border border-border rounded-lg focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/50">

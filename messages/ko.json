@@ -545,7 +545,8 @@
     "skipForNow": "나중에 하기",
     "storageNotice": "API 키는 브라우저에 로컬 저장되며 서버로 전송되지 않습니다.",
     "validationFailed": "API 키 검증에 실패했습니다. 다시 시도해 주세요.",
-    "invalidApiKey": "유효하지 않은 API 키"
+    "invalidApiKey": "유효하지 않은 API 키",
+    "storedLabel": "저장됨"
   },
   "versions": {
     "original": "원본",

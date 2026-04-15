@@ -545,7 +545,8 @@
     "skipForNow": "Skip for now",
     "storageNotice": "API keys are stored locally in your browser and never sent to our servers.",
     "validationFailed": "Failed to validate API key. Please try again.",
-    "invalidApiKey": "Invalid API key"
+    "invalidApiKey": "Invalid API key",
+    "storedLabel": "Stored"
   },
   "versions": {
     "original": "Original",

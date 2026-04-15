@@ -8788,6 +8788,8 @@ Output: A single combined 3×3 grid image in 3:4 aspect ratio.`;
             localStorage.setItem('statickit_has_visited', 'true');
           }
         }}
+        isGeminiKeySet={!!apiKey}
+        isOpenAIKeySet={!!openaiApiKey}
         onApiKeySet={handleSetApiKey}
         onOpenAIKeySet={handleSetOpenAIKey}
       />

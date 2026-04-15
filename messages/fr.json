@@ -545,7 +545,8 @@
     "skipForNow": "Passer pour l'instant",
     "storageNotice": "Les clés API sont stockées localement dans votre navigateur et ne sont jamais envoyées à nos serveurs.",
     "validationFailed": "Échec de la validation de la clé API. Veuillez réessayer.",
-    "invalidApiKey": "Clé API invalide"
+    "invalidApiKey": "Clé API invalide",
+    "storedLabel": "Stockée"
   },
   "versions": {
     "original": "Original",

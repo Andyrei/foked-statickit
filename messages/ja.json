@@ -545,7 +545,8 @@
     "skipForNow": "今はスキップ",
     "storageNotice": "APIキーはブラウザにローカル保存され、サーバーに送信されることはありません。",
     "validationFailed": "APIキーの検証に失敗しました。もう一度お試しください。",
-    "invalidApiKey": "無効なAPIキー"
+    "invalidApiKey": "無効なAPIキー",
+    "storedLabel": "保存済み"
   },
   "versions": {
     "original": "オリジナル",

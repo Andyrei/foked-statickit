@@ -523,7 +523,7 @@
     "qualityTooltip": "Mayor calidad = mejores resultados pero mayor costo de API"
   },
   "apiKey": {
-    "title": "Configuracion de Clave API",
+    "title": "Configuración de Clave API",
     "settingsTitle": "Configuración de Claves API",
     "description": "Ingresa tu clave API para comenzar a editar",
     "geminiKey": "Clave API de Gemini",
@@ -545,7 +545,8 @@
     "skipForNow": "Omitir por ahora",
     "storageNotice": "Las claves API se almacenan localmente en tu navegador y nunca se envían a nuestros servidores.",
     "validationFailed": "Error al validar la clave API. Por favor, inténtalo de nuevo.",
-    "invalidApiKey": "Clave API inválida"
+    "invalidApiKey": "Clave API inválida",
+    "storedLabel": "Almacenada"
   },
   "versions": {
     "original": "Original",
